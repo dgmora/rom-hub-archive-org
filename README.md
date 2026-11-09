@@ -338,6 +338,114 @@ verified live.
 | `collection` | `str` | `"Archive.org"` | RomM collection imported ROMs are grouped into |
 | `downloadable_only` | `bool` | `false` | drop `stream_only` items from search — for bulk importing, where seeing items the importer will refuse is noise |
 | `max_rows` | `int` | `50000` | ceiling on a single bulk request, so a typo cannot ask Archive.org for a million rows |
+| `file_sets` | `list[str]` | `["retro-roms-best-set", "tiny-best-set-go"]` | Items whose files and ZIP members are searched and catalogued; `[]` disables file-set search |
+| `max_set_files` | `int` | `8000` | Maximum entries per item manifest or ZIP listing |
+
+### File-set discovery
+
+An item identifier enables automatic discovery of its supported direct files
+and ZIP members. Platform labels in directory and archive names, such as
+`PS`, `FC`, `Sony - PS1 (A-L).zip` and `Sony - PSP (A-G).zip`, assign the
+platform. The shared aliases are in `archive_org/set_platforms.py`.
+Conflicting or unknown labels are skipped; generic extensions and game titles
+are not platform evidence. Search matches the individual filename, without
+resolving a canonical game database ID.
+
+The two default items are already enabled on a fresh installation. Optional
+custom lists use comma-separated CLI values, for example:
+
+    rom-hub plugin config archive-org --set 'file_sets=another-item,another-item/PS:psx'
+
+ROM Hub preserves saved configuration during upgrades, including an empty
+list that disables discovery. To restore this field from the installed
+manifest defaults without naming the sets manually (also works in fish):
+
+```sh
+python -c '
+from rom_hub.cli import default_root
+from rom_hub.registry import Registry
+registry = Registry(default_root())
+plugin = registry.get("archive-org")
+config = dict(plugin.config)
+config["file_sets"] = plugin.manifest.config_schema["file_sets"]["default"]
+registry.set_config(plugin.slug, config)
+print("Restored file_sets:", config["file_sets"])
+'
+```
+
+Entries may also scope discovery to a folder or ZIP, for example
+`item/folder/games.zip/Roms`. An explicit `:platform` suffix overrides automatic
+assignment for that scope, such as `item/games.zip/Roms/PS:psx`. Existing
+explicit mappings retain their behavior and use the longest matching scope.
+
+Automatic discovery accepts five directory levels in total, counting folders
+before and inside a ZIP, excluding the item and archive/payload filenames.
+It inspects one ZIP boundary using Archive.org's View Contents listing; it
+does not download the whole ZIP to index it or open archives inside ZIPs.
+Inner game ZIPs remain downloadable payloads. Raw BIN/CUE/GDI groups remain
+unsupported. A matching adjacent M3U must name safe, existing sibling images;
+planning includes exactly that playlist and its referenced images.
+
+Run `rom-hub census build archive-org` after upgrading or changing sources or
+platform aliases. Automatic items are resumable census units; scope discovery
+does not fetch ZIP listings. ZIP coverage has no independent denominator and
+is reported as unknown. Counts represent entries, not unique games.
+
+HTTP 401/403 and unreadable listings are controlled resource failures. Access
+may require an authorized Archive.org session in the host; a browser login
+does not authenticate the host. This plugin does not store credentials. Live
+search preserves accessible matches and writes partial failures to plugin
+diagnostics. If no matches survive a failed resource, search reports a source
+error. The current host does not display partial plugin warnings alongside
+successful results. HTTP 403 stops further ZIP probes for that item. Other archive errors allow
+census discovery to continue, retaining an incomplete unit and an error summary.
+Restricted census units remain incomplete and their
+errors appear in the report; other units continue. A readable listing does
+not guarantee a later download will be authorized.
+
+Broad live searches have a 20-second discovery budget checked between listing
+requests, in addition to the host's HTTP and execution limits. Use the census
+for repeated searches; a slow individual request can still reach host limits.
+
+### Host authentication
+
+Authentication is supplied by the host, outside plugin configuration. Hosts
+that support `rom-hub auth` can authenticate standalone CLI requests:
+
+    rom-hub auth login archive-org
+    rom-hub auth status archive-org
+
+Use the same `ROM_HUB_HOME` and secret-store settings for login, search, census
+and import. Existing hosts without this command need an authenticated host HTTP
+adapter; a browser login alone is insufficient. This plugin remains compatible
+with anonymous hosts and stores no credentials.
+
+The host may renew and retry a 401/403 once. If the final response is still
+403, this plugin stops further ZIP probes for the affected item and reports its
+census unit as incomplete. Authentication does not guarantee item access.
+
+### Checking the catalogue
+
+Use the installed revision and effective configuration you intend to test:
+
+    rom-hub plugin config archive-org
+    rom-hub census build archive-org --units --verbose
+    rom-hub census report archive-org --units
+    rom-hub search "Crisis Core" --platform psp --all-variants
+    rom-hub search "Crisis Core" --platform psp --all-variants --live
+    rom-hub search "Final Fantasy VIII" --platform psx --all-variants
+    rom-hub search "Final Fantasy VIII" --platform psx --all-variants --live
+
+Inspect unit failures and skip reasons, and confirm the ordinary search says
+it answered from a built catalogue. Search can fall back to live results;
+results alone do not prove that the catalogue contains the game. Unknown ZIP
+coverage and restricted units must not be described as verified completeness.
+The initial census also enumerates `census_collection` and can take minutes.
+
+ROMarr currently calls live plugin search rather than consuming this CLI
+catalogue. Test its installed plugin, service account, `ROM_HUB_HOME` and
+host session separately. A correct fetch plan proves the chosen URLs and
+platform; only an authorized download verifies access to the payload.
 
 ## How the importer routes
 
